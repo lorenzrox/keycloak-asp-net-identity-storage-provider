@@ -1,2 +1,2 @@
 
-org.keycloak.authorization.policy.provider.groupmembership.GroupMembershipPolicyProviderFactory
+org.keycloak.storage.aspnet.AspNetIdentityStorageProviderFactory
