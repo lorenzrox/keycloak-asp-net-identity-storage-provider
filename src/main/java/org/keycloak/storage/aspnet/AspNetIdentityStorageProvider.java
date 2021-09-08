@@ -27,9 +27,11 @@ import org.keycloak.storage.UserStorageProviderModel;
 import org.keycloak.storage.user.ImportedUserValidation;
 import org.keycloak.storage.user.UserLookupProvider;
 import org.keycloak.storage.user.UserQueryProvider;
+import org.keycloak.storage.user.UserRegistrationProvider;
 
-public class AspNetIdentityStorageProvider implements UserStorageProvider, UserLookupProvider.Streams,
-        UserQueryProvider.Streams, CredentialInputUpdater.Streams, ImportedUserValidation, CredentialInputValidator {
+public class AspNetIdentityStorageProvider
+        implements UserStorageProvider, UserRegistrationProvider, UserLookupProvider.Streams, UserQueryProvider.Streams,
+        CredentialInputUpdater.Streams, ImportedUserValidation, CredentialInputValidator {
     private static final int SALT_SIZE = 16;
     private final KeycloakSession session;
     private final UserStorageProviderModel model;
@@ -154,7 +156,7 @@ public class AspNetIdentityStorageProvider implements UserStorageProvider, UserL
             }
         }
 
-        //TODO: implement
+        // TODO: implement
         return null;
     }
 
@@ -203,6 +205,18 @@ public class AspNetIdentityStorageProvider implements UserStorageProvider, UserL
     @Override
     public Stream<String> getDisableableCredentialTypesStream(RealmModel realm, UserModel user) {
         return Stream.empty();
+    }
+
+    @Override
+    public UserModel addUser(RealmModel realm, String username) {
+        // TODO Auto-generated method stub
+        return null;
+    }
+
+    @Override
+    public boolean removeUser(RealmModel realm, UserModel user) {
+        // TODO Auto-generated method stub
+        return false;
     }
 
     @Override
