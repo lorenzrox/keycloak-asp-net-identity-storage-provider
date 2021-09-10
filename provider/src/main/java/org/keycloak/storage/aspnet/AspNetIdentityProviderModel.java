@@ -4,10 +4,11 @@ import org.keycloak.component.ComponentModel;
 import org.keycloak.storage.UserStorageProviderModel;
 
 public class AspNetIdentityProviderModel extends UserStorageProviderModel {
-    public static final String APPLICATION_NAME = "applicationName";
     public static final String DB_URL = "url";
     public static final String DB_USER = "user";
     public static final String DB_PASSWORD = "password";
+    public static final String APPLICATION_NAME = "applicationName";
+    public static final String VALIDATION_ALGORITHM = "validationAlgorithm";
     public static final String UPDATE_PROFILE_FIRST_LOGIN = "updateProfileFirstLogin";
 
     private transient String applicationName;
@@ -15,6 +16,7 @@ public class AspNetIdentityProviderModel extends UserStorageProviderModel {
     private transient String dbUser;
     private transient String dbPassword;
     private transient Boolean updateProfileFirstLogin;
+    private transient AspNetIdentityValidationAlgorithm validationAlgorithm;
 
     public AspNetIdentityProviderModel() {
         setProviderType(AspNetIdentityStorageProvider.class.getName());
@@ -74,6 +76,24 @@ public class AspNetIdentityProviderModel extends UserStorageProviderModel {
     public void setApplicationName(String applicationName) {
         this.applicationName = applicationName;
         getConfig().putSingle(APPLICATION_NAME, applicationName);
+    }
+
+    public AspNetIdentityValidationAlgorithm getValidationAlgorithm() {
+        if (validationAlgorithm == null) {
+            String val = getConfig().getFirst(VALIDATION_ALGORITHM);
+            if (val == null) {
+                validationAlgorithm = AspNetIdentityValidationAlgorithm.SHA1;
+            } else {
+                validationAlgorithm = AspNetIdentityValidationAlgorithm.valueOf(val);
+            }
+        }
+
+        return validationAlgorithm;
+    }
+
+    public void setValidationAlgorithm(AspNetIdentityValidationAlgorithm validationAlgorithm) {
+        this.validationAlgorithm = validationAlgorithm;
+        getConfig().putSingle(VALIDATION_ALGORITHM, validationAlgorithm.name());
     }
 
     public boolean isUpdateProfileFirstLogin() {

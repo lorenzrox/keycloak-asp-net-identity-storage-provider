@@ -28,4 +28,9 @@ public class AspNetIdentityStoredPassword {
     public void setFormat(Integer format) {
         this.format = format;
     }
+
+    @Override
+    public String toString() {
+        return String.format("password=%s, salt=%s, format=%d", password, salt, format);
+    }
 }

@@ -1,5 +1,6 @@
 package org.keycloak.storage.aspnet;
 
+import java.util.Arrays;
 import java.util.List;
 
 import org.keycloak.component.ComponentModel;
@@ -24,7 +25,7 @@ public class AspNetIdentityStorageProviderFactory implements UserStorageProvider
                 || providerModel.getDbUser() == null || providerModel.getDbPassword() == null) {
             return null;
         }
-        
+
         return new AspNetIdentityStorageProvider(session, providerModel);
     }
 
@@ -41,18 +42,33 @@ public class AspNetIdentityStorageProviderFactory implements UserStorageProvider
     private static List<ProviderConfigProperty> getConfigProps() {
         return ProviderConfigurationBuilder.create().property().name(AspNetIdentityProviderModel.DB_URL)
                 .label(AspNetIdentityConstants.DB_URL_LABEL).helpText(AspNetIdentityConstants.DB_URL_HELP_TEXT)
-                .type(ProviderConfigProperty.STRING_TYPE).add().property().name(AspNetIdentityProviderModel.DB_USER)
-                .label(AspNetIdentityConstants.DB_USER_LABEL).helpText(AspNetIdentityConstants.DB_USER_HELP_TEXT)
-                .type(ProviderConfigProperty.STRING_TYPE).add().property().name(AspNetIdentityProviderModel.DB_PASSWORD)
+                .type(ProviderConfigProperty.STRING_TYPE).add()
+
+                .property().name(AspNetIdentityProviderModel.DB_USER).label(AspNetIdentityConstants.DB_USER_LABEL)
+                .helpText(AspNetIdentityConstants.DB_USER_HELP_TEXT).type(ProviderConfigProperty.STRING_TYPE).add()
+
+                .property().name(AspNetIdentityProviderModel.DB_PASSWORD)
                 .label(AspNetIdentityConstants.DB_PASSWORD_LABEL)
                 .helpText(AspNetIdentityConstants.DB_PASSWORD_HELP_TEXT).type(ProviderConfigProperty.PASSWORD).add()
+
                 .property().name(AspNetIdentityProviderModel.APPLICATION_NAME)
                 .label(AspNetIdentityConstants.APPLICATION_NAME_LABEL)
                 .helpText(AspNetIdentityConstants.APPLICATION_NAME_HELP_TEXT).type(ProviderConfigProperty.STRING_TYPE)
-                .add().property().name(UserStorageProviderModel.IMPORT_ENABLED)
+                .add()
+
+                .property().name(AspNetIdentityProviderModel.VALIDATION_ALGORITHM)
+                .label(AspNetIdentityConstants.VALIDATION_ALGORITHM_LABEL)
+                .helpText(AspNetIdentityConstants.VALIDATION_ALGORITHM_HELP_TEXT).type(ProviderConfigProperty.LIST_TYPE)
+                .options(Arrays.stream(AspNetIdentityValidationAlgorithm.values()).map(v -> v.name())
+                        .toArray(String[]::new))
+                .defaultValue(AspNetIdentityValidationAlgorithm.SHA1.name()).add()
+
+                .property().name(UserStorageProviderModel.IMPORT_ENABLED)
                 .label(AspNetIdentityConstants.IMPORT_ENABLED_LABEL)
                 .helpText(AspNetIdentityConstants.IMPORT_ENABLED_HELP_TEXT).type(ProviderConfigProperty.BOOLEAN_TYPE)
-                .defaultValue("true").add().property().name(AspNetIdentityProviderModel.UPDATE_PROFILE_FIRST_LOGIN)
+                .defaultValue("true").add()
+
+                .property().name(AspNetIdentityProviderModel.UPDATE_PROFILE_FIRST_LOGIN)
                 .label(AspNetIdentityConstants.UPDATE_PROFILE_FIRST_LOGIN_LABEL)
                 .helpText(AspNetIdentityConstants.UPDATE_PROFILE_FIRST_LOGIN_HELP_TEXT)
                 .type(ProviderConfigProperty.BOOLEAN_TYPE).defaultValue("true").add().build();

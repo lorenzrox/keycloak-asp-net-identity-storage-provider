@@ -16,7 +16,6 @@
     <properties>
         <version.org.keycloak>${project.version}</version.org.keycloak>
         <jboss.logging.version>3.4.1.Final</jboss.logging.version>
-        <bouncycastle.version>1.68</bouncycastle.version>
 
         <!-- Databases -->
         <mysql.driver.version>8.0.23</mysql.driver.version>
@@ -58,11 +57,6 @@
             <groupId>com.microsoft.sqlserver</groupId>
             <artifactId>mssql-jdbc</artifactId>
             <version>${mssql.driver.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.bouncycastle</groupId>
-            <artifactId>bcprov-jdk15on</artifactId>
-            <version>${bouncycastle.version}</version>
         </dependency>
     </dependencies>
 

@@ -1,6 +1,10 @@
 package org.keycloak.storage.aspnet;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.security.InvalidKeyException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.sql.CallableStatement;
 import java.sql.Connection;
@@ -12,6 +16,7 @@ import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -22,8 +27,9 @@ import java.util.function.Consumer;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
-import org.bouncycastle.crypto.Digest;
-import org.bouncycastle.crypto.digests.SHA1Digest;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+
 import org.jboss.logging.Logger;
 import org.keycloak.common.util.Base64;
 import org.keycloak.credential.CredentialInput;
@@ -70,6 +76,8 @@ public class AspNetIdentityStorageProvider
     // dbo.aspnet_Membership_GetAllUsers
     // dbo.aspnet_Membership_FindUsersByEmail
     // dbo.aspnet_Membership_FindUsersByName
+    // dbo.aspnet_Membership_GetPasswordWithFormat
+    // dbo.aspnet_UsersInRoles_GetRolesForUser
 
     @FunctionalInterface
     interface SqlStatementFunction<T extends Statement> {
@@ -430,6 +438,8 @@ public class AspNetIdentityStorageProvider
 
     @Override
     public boolean isValid(RealmModel realm, UserModel user, CredentialInput credentialInput) {
+        logger.debugf("validating user's '%s' password. ", user.getUsername());
+
         if (!supportsCredentialType(credentialInput.getType())) {
             logger.info("credentialType:" + credentialInput.getType() + " not supported");
             return false;
@@ -469,8 +479,7 @@ public class AspNetIdentityStorageProvider
             throw new ModelException(error.getMessage(), error.getParameters());
         }
 
-        // TODO: implement
-        return false;
+        return updateUserPassword(realm, user.getUsername(), password);
     }
 
     @Override
@@ -721,23 +730,80 @@ public class AspNetIdentityStorageProvider
 
     protected AspNetIdentityStoredPassword loadUserPassword(RealmModel realm, String userName) {
         try (Connection connection = getConnection()) {
+            return loadUserPassword(connection, realm, userName);
+        } catch (SQLException ex) {
+            throw new RuntimeException("Failed to query database.", ex);
+        }
+    }
+
+    private AspNetIdentityStoredPassword loadUserPassword(Connection connection, RealmModel realm, String userName)
+            throws SQLException {
+        try (CallableStatement storedProcedure = connection
+                .prepareCall("{call dbo.aspnet_Membership_GetPasswordWithFormat(?,?,?,?)}")) {
+            storedProcedure.setString(1, model.getApplicationName());
+            storedProcedure.setString(2, userName);
+            storedProcedure.setBoolean(3, true);
+            storedProcedure.setTimestamp(4, Timestamp.from(Instant.now()));
+
+            try (ResultSet resultSet = storedProcedure.executeQuery()) {
+                if (resultSet.next()) {
+                    AspNetIdentityStoredPassword password = new AspNetIdentityStoredPassword();
+                    password.setPassword(resultSet.getString(1));
+                    password.setFormat(resultSet.getInt(2));
+                    password.setSalt(resultSet.getString(3));
+
+                    //logger.debugf("loaded stored password %s", password);
+
+                    return password;
+                } else {
+                    return null;
+                }
+            }
+        }
+    }
+
+    protected boolean updateUserPassword(RealmModel realm, String userName, String newPassword) {
+        try (Connection connection = getConnection()) {
+            AspNetIdentityStoredPassword storedPassword = loadUserPassword(connection, realm, userName);
+            if (storedPassword == null) {
+                return false;
+            }
+
+            String encodedPassword = encodePassword(newPassword, storedPassword.getFormat(), storedPassword.getSalt());
+
             try (CallableStatement storedProcedure = connection
-                    .prepareCall("{call dbo.aspnet_Membership_GetUserByEmail(?,?)}")) {
+                    .prepareCall("{call dbo.aspnet_Membership_SetPassword(?,?,?,?,?,?)}")) {
                 storedProcedure.setString(1, model.getApplicationName());
                 storedProcedure.setString(2, userName);
-                storedProcedure.setBoolean(3, true);
-                storedProcedure.setTimestamp(4, Timestamp.from(Instant.now()));
+                storedProcedure.setString(3, encodedPassword);
+                storedProcedure.setString(4, storedPassword.getSalt());
+                storedProcedure.setTimestamp(5, Timestamp.from(Instant.now()));
+                storedProcedure.setInt(6, storedPassword.getFormat());
+         
+                storedProcedure.executeUpdate();
+
+                return true;
+            }
+        } catch (SQLException ex) {
+            throw new RuntimeException("Failed to update database.", ex);
+        }
+    }
+
+    protected List<String> loadUserRoles(RealmModel realm, String userName) {
+        try (Connection connection = getConnection()) {
+            try (CallableStatement storedProcedure = connection
+                    .prepareCall("{call dbo.aspnet_UsersInRoles_GetRolesForUser(?,?)}")) {
+                storedProcedure.setString(1, model.getApplicationName());
+                storedProcedure.setString(2, userName);
 
                 try (ResultSet resultSet = storedProcedure.executeQuery()) {
-                    if (resultSet.next()) {
-                        AspNetIdentityStoredPassword password = new AspNetIdentityStoredPassword();
-                        password.setPassword(resultSet.getString(1));
-                        password.setFormat(resultSet.getInt(2));
-                        password.setSalt(resultSet.getString(3));
-                        return password;
-                    } else {
-                        return null;
+                    List<String> roles = new ArrayList<>();
+
+                    while (resultSet.next()) {
+                        roles.add(resultSet.getString(1));
                     }
+
+                    return roles;
                 }
             }
         } catch (SQLException ex) {
@@ -821,10 +887,10 @@ public class AspNetIdentityStorageProvider
         }
     }
 
-    private String encodePassword(String pass, int passwordFormat, String salt) {
+    private String encodePassword(String password, int passwordFormat, String salt) {
         // Plain password
         if (passwordFormat == 0) {
-            return pass;
+            return password;
         }
 
         try {
@@ -832,12 +898,8 @@ public class AspNetIdentityStorageProvider
                 throw new UnsupportedOperationException("Password format not supported");
             }
 
-            byte[] resultBuffer = null;
-            byte[] passwordBuffer = pass.getBytes(StandardCharsets.UTF_16LE);
-            byte[] saltBuffer = Base64.decode(salt);
-
-            // TODO: implement
-
+            byte[] passwordBuffer = password.getBytes(StandardCharsets.UTF_16LE);
+            byte[] resultBuffer = getHashAlgorithm(salt).computeHash(passwordBuffer);
             return Base64.encodeBytes(resultBuffer);
         } catch (Exception e) {
             throw new RuntimeException("Failed to encode password", e);
@@ -845,19 +907,84 @@ public class AspNetIdentityStorageProvider
     }
 
     private String generateSalt() {
-        try {
-            SecureRandom random = new SecureRandom();
-            byte randBytes[] = new byte[SALT_SIZE];
-            random.nextBytes(randBytes);
+        SecureRandom random = new SecureRandom();
+        byte randBytes[] = new byte[SALT_SIZE];
+        random.nextBytes(randBytes);
 
-            return Base64.encodeBytes(randBytes);
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to generate password salt", e);
+        return Base64.encodeBytes(randBytes);
+    }
+
+    private HashAlgorithm getHashAlgorithm(String salt)
+            throws NoSuchAlgorithmException, InvalidKeyException, IOException {
+        switch (model.getValidationAlgorithm()) {
+            case MD5:
+                return new DigestHashAlgorithm("MD5", salt);
+            case HMACSHA256:
+                return new KeyedHashAlgorithm("HmacSHA256", salt, 64);
+            case HMACSHA384:
+                return new KeyedHashAlgorithm("HmacSHA384", salt, 128);
+            case HMACSHA512:
+                return new KeyedHashAlgorithm("HmacSHA512", salt, 128);
+            default: {
+                return new DigestHashAlgorithm("SHA-1", salt);
+            }
         }
     }
 
-    private Digest getHashAlgorithm() {
-        // TODO: implement
-        return new SHA1Digest();
+    private interface HashAlgorithm {
+        byte[] computeHash(byte[] input);
+    }
+
+    private static class DigestHashAlgorithm implements HashAlgorithm {
+        private final MessageDigest digest;
+        private final byte[] saltBuffer;
+
+        DigestHashAlgorithm(String algorithm, String salt) throws NoSuchAlgorithmException, IOException {
+            digest = MessageDigest.getInstance(algorithm);
+            saltBuffer = Base64.decode(salt);
+        }
+
+        @Override
+        public byte[] computeHash(byte[] input) {
+            byte[] buffer = new byte[saltBuffer.length + input.length];
+            System.arraycopy(saltBuffer, 0, buffer, 0, saltBuffer.length);
+            System.arraycopy(input, 0, buffer, saltBuffer.length, input.length);
+            return digest.digest(buffer);
+        }
+    }
+
+    private static class KeyedHashAlgorithm implements HashAlgorithm {
+        private final Mac mac;
+
+        KeyedHashAlgorithm(String algorithm, String salt, int keySize)
+                throws NoSuchAlgorithmException, InvalidKeyException, IOException {
+            mac = Mac.getInstance(algorithm);
+            mac.init(getKey(algorithm, salt, keySize));
+        }
+
+        @Override
+        public byte[] computeHash(byte[] input) {
+            return mac.doFinal(input);
+        }
+
+        private static SecretKeySpec getKey(String algorithm, String salt, int keySize) throws IOException {
+            byte[] saltBuffer = Base64.decode(salt);
+
+            if (saltBuffer.length < keySize) {
+                byte[] keyBuffer = new byte[keySize];
+
+                for (int iter = 0; iter < keySize;) {
+                    int len = Math.min(saltBuffer.length, keySize - iter);
+                    System.arraycopy(saltBuffer, 0, keyBuffer, iter, len);
+                    iter += len;
+                }
+
+                saltBuffer = keyBuffer;
+            } else if (saltBuffer.length > keySize) {
+                saltBuffer = Arrays.copyOfRange(saltBuffer, 0, keySize);
+            }
+
+            return new SecretKeySpec(saltBuffer, algorithm);
+        }
     }
 }
