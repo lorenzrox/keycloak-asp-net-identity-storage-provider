@@ -55,6 +55,7 @@ public class AspNetIdentityStorageProvider
         CredentialInputUpdater.Streams, ImportedUserValidation, CredentialInputValidator {
     private static final Logger logger = Logger.getLogger(AspNetIdentityStorageProvider.class);
     private static final int SALT_SIZE = 16;
+    private final AspNetIdentityUserManager userManager = new AspNetIdentityUserManager();
     private final KeycloakSession session;
     private final AspNetIdentityProviderModel model;
 
@@ -94,6 +95,13 @@ public class AspNetIdentityStorageProvider
 
     @Override
     public UserModel getUserById(RealmModel realm, String id) {
+        logger.debugf("getting user with id \"%s\" for realm \"%s\"", id, realm.getName());
+
+        UserModel alreadyLoadedInSession = userManager.getManagedProxiedUser(id);
+        if (alreadyLoadedInSession != null) {
+            return alreadyLoadedInSession;
+        }
+
         String externalId = StorageId.externalId(id);
         AspNetIdentityUser aspNetUser = loadAspNetUserById(realm, externalId);
         if (aspNetUser == null) {
@@ -105,6 +113,8 @@ public class AspNetIdentityStorageProvider
 
     @Override
     public UserModel getUserByUsername(RealmModel realm, String username) {
+        logger.debugf("getting user with username \"%s\" for realm \"%s\"", username, realm.getName());
+
         AspNetIdentityUser aspNetUser = loadAspNetUserByUserName(realm, username);
         if (aspNetUser == null) {
             return null;
@@ -126,6 +136,8 @@ public class AspNetIdentityStorageProvider
 
     @Override
     public UserModel getUserByEmail(RealmModel realm, String email) {
+        logger.debugf("getting user with email \"%s\" for realm \"%s\"", email, realm.getName());
+
         AspNetIdentityUser aspNetUser = loadAspNetUserByEmail(realm, email);
         if (aspNetUser == null) {
             return null;
@@ -147,6 +159,8 @@ public class AspNetIdentityStorageProvider
 
     @Override
     public int getUsersCount(RealmModel realm) {
+        logger.debugf("getting user count for realm \"%s\"", realm.getName());
+
         try (Connection connection = getConnection()) {
             try (PreparedStatement query = connection.prepareStatement(
                     "select count(*) from [dbo].[aspnet_Membership] m join [dbo].[aspnet_Users] u on m.UserId = u.UserId "
@@ -166,6 +180,9 @@ public class AspNetIdentityStorageProvider
 
     @Override
     public Stream<UserModel> getUsersStream(RealmModel realm, Integer firstResult, Integer maxResults) {
+        logger.debugf("getting users for realm \"%s\" firstResult=%d, maxResults=%d", realm.getName(), firstResult,
+                maxResults);
+
         return queryAsStream(realm, connection -> {
             String sql = "with Query as (select u.UserName, m.Email, m.Comment, m.IsApproved, m.CreateDate, u.UserId, m.IsLockedOut, "
                     + "row_number() over (order by u.UserName) as RowIndex "
@@ -235,6 +252,8 @@ public class AspNetIdentityStorageProvider
 
     @Override
     public int getUsersCount(RealmModel realm, Map<String, String> params) {
+        logger.debugf("getting user count for realm \"%s\"", realm.getName());
+
         String sql = "select count(*) from [dbo].[aspnet_Membership] m join [dbo].[aspnet_Users] u on m.UserId = u.UserId "
                 + "join [dbo].[aspnet_Applications] a on u.ApplicationId = a.ApplicationId "
                 + "where a.LoweredApplicationName = ?";
@@ -286,6 +305,9 @@ public class AspNetIdentityStorageProvider
     @Override
     public Stream<UserModel> searchForUserStream(RealmModel realm, Map<String, String> params, Integer firstResult,
             Integer maxResults) {
+        logger.debugf("searching users for realm \"%s\" firstResult=%d, maxResults=%d", realm.getName(), firstResult,
+                maxResults);
+
         String search = params.get(UserModel.SEARCH);
         if (search != null) {
             int spaceIndex = search.lastIndexOf(' ');
@@ -464,8 +486,7 @@ public class AspNetIdentityStorageProvider
 
     @Override
     public UserModel addUser(RealmModel realm, String userName) {
-        UserModel user = null;
-
+        UserModel user;
         if (model.isImportEnabled()) {
             user = session.userLocalStorage().addUser(realm, userName);
             user.setFederationLink(model.getId());
@@ -477,6 +498,10 @@ public class AspNetIdentityStorageProvider
         }
 
         AspNetIdentityUser aspNetUser = addAspNetUser(realm, user);
+        if (aspNetUser == null) {
+            return null;
+        }
+
         user.setSingleAttribute(AspNetIdentityConstants.ASPNET_IDENTITY_ID, aspNetUser.getId());
 
         UserModel proxy = proxy(realm, user, aspNetUser, true);
@@ -497,6 +522,8 @@ public class AspNetIdentityStorageProvider
                     user.getUsername());
             return false;
         }
+
+        userManager.removeManagedUserEntry(user.getId());
 
         return removeAspNetUserById(realm, idAttribute);
     }
@@ -520,7 +547,7 @@ public class AspNetIdentityStorageProvider
                 aspNetUser.setId(resultSet.getString(6));
                 aspNetUser.setIsLockedOut(resultSet.getBoolean(7));
 
-                //logger.debugf("loaded user %s", aspNetUser);
+                // logger.debugf("loaded user %s", aspNetUser);
 
                 local = importUserFromIdentity(realm, aspNetUser);
             }
@@ -587,10 +614,21 @@ public class AspNetIdentityStorageProvider
     }
 
     protected UserModel proxy(RealmModel realm, UserModel local, AspNetIdentityUser aspNetUser, boolean newUser) {
+        UserModel existing = userManager.getManagedProxiedUser(local.getId());
+        if (existing != null) {
+            return existing;
+        }
+
+        userManager.setManagedProxiedUser(local, aspNetUser);
         return local;
     }
 
     protected AspNetIdentityUser loadAndValidateUser(RealmModel realm, UserModel local) {
+        AspNetIdentityUser existing = userManager.getManagedAspNetUser(local.getId());
+        if (existing != null) {
+            return existing;
+        }
+
         String idAttribute = local.getFirstAttribute(AspNetIdentityConstants.ASPNET_IDENTITY_ID);
         return loadAspNetUserById(realm, idAttribute);
     }
@@ -613,7 +651,7 @@ public class AspNetIdentityStorageProvider
                         aspNetUser.setUserName(resultSet.getString(9));
                         aspNetUser.setIsLockedOut(resultSet.getBoolean(10));
 
-                        //logger.debugf("loaded user %s", aspNetUser);
+                        // logger.debugf("loaded user %s", aspNetUser);
 
                         return aspNetUser;
                     } else {
