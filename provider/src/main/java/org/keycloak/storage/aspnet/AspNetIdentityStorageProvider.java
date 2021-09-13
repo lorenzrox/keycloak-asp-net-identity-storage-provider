@@ -14,6 +14,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
+import java.sql.Types;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -32,6 +33,7 @@ import javax.crypto.spec.SecretKeySpec;
 
 import org.jboss.logging.Logger;
 import org.keycloak.common.util.Base64;
+import org.keycloak.common.util.RandomString;
 import org.keycloak.credential.CredentialInput;
 import org.keycloak.credential.CredentialInputUpdater;
 import org.keycloak.credential.CredentialInputValidator;
@@ -518,21 +520,24 @@ public class AspNetIdentityStorageProvider
                 .filter(RequiredActionProviderModel::isDefaultAction).map(RequiredActionProviderModel::getAlias)
                 .forEachOrdered(proxy::addRequiredAction);
 
+        if (model.isUpdateProfileFirstLogin()) {
+            proxy.addRequiredAction(UserModel.RequiredAction.UPDATE_PROFILE);
+        }
+
+        proxy.addRequiredAction(UserModel.RequiredAction.UPDATE_PASSWORD);
         return proxy;
     }
 
     @Override
     public boolean removeUser(RealmModel realm, UserModel user) {
-        String idAttribute = user.getFirstAttribute(AspNetIdentityConstants.ASPNET_IDENTITY_ID);
-        if (idAttribute == null) {
+        if (!removeAspNetUser(realm, user, true)) {
             logger.warnf("User '%s' can't be deleted from ASPNET Identity as it doesn't exist here",
                     user.getUsername());
             return false;
         }
 
         userManager.removeManagedUserEntry(user.getId());
-
-        return removeAspNetUserById(realm, idAttribute);
+        return true;
     }
 
     @Override
@@ -591,8 +596,8 @@ public class AspNetIdentityStorageProvider
 
         String email = aspNetUser.getEmail();
         if (email != null) {
-            // imported.setEmail(email);
-            // imported.setEmailVerified(aspNetUser.getIsApproved());
+            imported.setEmail(email);
+            imported.setEmailVerified(aspNetUser.getIsApproved());
         }
 
         String comment = aspNetUser.getComment();
@@ -675,8 +680,8 @@ public class AspNetIdentityStorageProvider
         try (Connection connection = getConnection()) {
             try (CallableStatement storedProcedure = connection
                     .prepareCall("{call dbo.aspnet_Membership_GetUserByEmail(?,?)}")) {
-                storedProcedure.setString(1, model.getApplicationName());
-                storedProcedure.setString(2, email);
+                storedProcedure.setString(1 /* @ApplicationName */, model.getApplicationName());
+                storedProcedure.setString(2 /* @Email */, email);
 
                 try (ResultSet resultSet = storedProcedure.executeQuery()) {
                     if (resultSet.next()) {
@@ -702,10 +707,11 @@ public class AspNetIdentityStorageProvider
     private AspNetIdentityUser loadAspNetUserByUserName(Connection connection, RealmModel realm, String userName)
             throws SQLException {
         try (CallableStatement storedProcedure = connection
-                .prepareCall("{call dbo.aspnet_Membership_GetUserByName(?,?,?)}")) {
-            storedProcedure.setString(1, model.getApplicationName());
-            storedProcedure.setString(2, userName);
-            storedProcedure.setTimestamp(3, Timestamp.from(Instant.now()));
+                .prepareCall("{call dbo.aspnet_Membership_GetUserByName(?,?,?,?)}")) {
+            storedProcedure.setString(1 /* @ApplicationName */, model.getApplicationName());
+            storedProcedure.setString(2 /* @UserName */, userName);
+            storedProcedure.setTimestamp(3 /* @CurrentTimeUtc */, Timestamp.from(Instant.now()));
+            storedProcedure.setBoolean(4 /* @UpdateLastActivity */, false);
 
             try (ResultSet resultSet = storedProcedure.executeQuery()) {
                 if (resultSet.next()) {
@@ -740,10 +746,10 @@ public class AspNetIdentityStorageProvider
             throws SQLException {
         try (CallableStatement storedProcedure = connection
                 .prepareCall("{call dbo.aspnet_Membership_GetPasswordWithFormat(?,?,?,?)}")) {
-            storedProcedure.setString(1, model.getApplicationName());
-            storedProcedure.setString(2, userName);
-            storedProcedure.setBoolean(3, true);
-            storedProcedure.setTimestamp(4, Timestamp.from(Instant.now()));
+            storedProcedure.setString(1 /* @ApplicationName */ , model.getApplicationName());
+            storedProcedure.setString(2 /* @UserName */, userName);
+            storedProcedure.setBoolean(3 /* @UpdateLastLoginActivityDate */, true);
+            storedProcedure.setTimestamp(4 /* @CurrentTimeUtc */, Timestamp.from(Instant.now()));
 
             try (ResultSet resultSet = storedProcedure.executeQuery()) {
                 if (resultSet.next()) {
@@ -752,7 +758,7 @@ public class AspNetIdentityStorageProvider
                     password.setFormat(resultSet.getInt(2));
                     password.setSalt(resultSet.getString(3));
 
-                    //logger.debugf("loaded stored password %s", password);
+                    // logger.debugf("loaded stored password %s", password);
 
                     return password;
                 } else {
@@ -772,17 +778,18 @@ public class AspNetIdentityStorageProvider
             String encodedPassword = encodePassword(newPassword, storedPassword.getFormat(), storedPassword.getSalt());
 
             try (CallableStatement storedProcedure = connection
-                    .prepareCall("{call dbo.aspnet_Membership_SetPassword(?,?,?,?,?,?)}")) {
-                storedProcedure.setString(1, model.getApplicationName());
-                storedProcedure.setString(2, userName);
-                storedProcedure.setString(3, encodedPassword);
-                storedProcedure.setString(4, storedPassword.getSalt());
-                storedProcedure.setTimestamp(5, Timestamp.from(Instant.now()));
-                storedProcedure.setInt(6, storedPassword.getFormat());
-         
-                storedProcedure.executeUpdate();
+                    .prepareCall("{? = call dbo.aspnet_Membership_SetPassword(?,?,?,?,?,?)}")) {
+                storedProcedure.registerOutParameter(1, Types.INTEGER);
+                storedProcedure.setString(2 /* @ApplicationName */, model.getApplicationName());
+                storedProcedure.setString(3 /* @UserName */, userName);
+                storedProcedure.setString(4 /* @NewPassword */, encodedPassword);
+                storedProcedure.setString(5 /* @PasswordSalt */, storedPassword.getSalt());
+                storedProcedure.setTimestamp(6 /* @CurrentTimeUtc */, Timestamp.from(Instant.now()));
+                storedProcedure.setInt(7 /* @PasswordFormat */, storedPassword.getFormat());
 
-                return true;
+                storedProcedure.execute();
+
+                return storedProcedure.getInt(1) == 0;
             }
         } catch (SQLException ex) {
             throw new RuntimeException("Failed to update database.", ex);
@@ -793,8 +800,8 @@ public class AspNetIdentityStorageProvider
         try (Connection connection = getConnection()) {
             try (CallableStatement storedProcedure = connection
                     .prepareCall("{call dbo.aspnet_UsersInRoles_GetRolesForUser(?,?)}")) {
-                storedProcedure.setString(1, model.getApplicationName());
-                storedProcedure.setString(2, userName);
+                storedProcedure.setString(1 /* @ApplicationName */, model.getApplicationName());
+                storedProcedure.setString(2 /* @UserName */, userName);
 
                 try (ResultSet resultSet = storedProcedure.executeQuery()) {
                     List<String> roles = new ArrayList<>();
@@ -812,13 +819,67 @@ public class AspNetIdentityStorageProvider
     }
 
     protected AspNetIdentityUser addAspNetUser(RealmModel realm, UserModel user) {
-        // TODO: implement
-        return null;
+        String salt = generateSalt();
+        String password = generatePassword(realm);
+
+        try (Connection connection = getConnection()) {
+            try (CallableStatement storedProcedure = connection
+                    .prepareCall("{? = call dbo.aspnet_Membership_CreateUser(?,?,?,?,?,?,?,?,?,?,?,?,?)}")) {
+                storedProcedure.registerOutParameter(/* @ReturnValue */ 1, Types.INTEGER);
+                storedProcedure.setString(2 /* @ApplicationName */, model.getApplicationName());
+                storedProcedure.setString(3 /* @UserName */, user.getUsername());
+                storedProcedure.setString(4 /* @Password */, password);
+                storedProcedure.setString(5 /* @PasswordSalt */, salt);
+                storedProcedure.setString(6 /* @Email */, user.getEmail());
+                storedProcedure.setString(7 /* @PasswordQuestion */ , null);
+                storedProcedure.setString(8 /* @PasswordAnswer */, null);
+                storedProcedure.setBoolean(9 /* @IsApproved */, user.isEmailVerified());
+                storedProcedure.setTimestamp(10 /* @CurrentTimeUtc */, Timestamp.from(Instant.now()));
+                storedProcedure.setTimestamp(11 /* @CreateDate */, new Timestamp(user.getCreatedTimestamp()));
+                storedProcedure.setInt(12 /* @UniqueEmail */ , realm.isDuplicateEmailsAllowed() ? 0 : 1);
+                storedProcedure.setInt(13 /* @PasswordFormat */, 1);
+                storedProcedure.registerOutParameter(14 /* @UserId */, Types.NVARCHAR);
+
+                storedProcedure.execute();
+
+                if (storedProcedure.getInt(1) == 0) {
+                    String id = storedProcedure.getString(14);
+                    AspNetIdentityUser aspNetUser = new AspNetIdentityUser();
+                    aspNetUser.setUserName(user.getUsername());
+                    aspNetUser.setEmail(user.getEmail());
+                    aspNetUser.setIsApproved(user.isEmailVerified());
+                    aspNetUser.setCreatedTimestamp(user.getCreatedTimestamp());
+                    aspNetUser.setId(id);
+
+                    // logger.debugf("created user %s", aspNetUser);
+
+                    return aspNetUser;
+                }
+
+                return null;
+            }
+        } catch (SQLException ex) {
+            throw new RuntimeException("Failed to update database.", ex);
+        }
     }
 
-    protected boolean removeAspNetUserById(RealmModel realm, String id) {
-        // TODO: implement
-        return false;
+    protected boolean removeAspNetUser(RealmModel realm, UserModel user, boolean deleteAllData) {
+        try (Connection connection = getConnection()) {
+            try (CallableStatement storedProcedure = connection
+                    .prepareCall("{? = call dbo.aspnet_Users_DeleteUser(?,?,?,?)}")) {
+                storedProcedure.registerOutParameter(1 /* @ReturnValue */, Types.INTEGER);
+                storedProcedure.setString(2 /* @ApplicationName */, model.getApplicationName());
+                storedProcedure.setString(3 /* @UserName */, user.getUsername());
+                storedProcedure.setInt(4 /* @TablesToDeleteFrom */, deleteAllData ? 0xF : 0x1);
+                storedProcedure.registerOutParameter(5 /* @NumTablesDeletedFrom */, Types.INTEGER);
+
+                storedProcedure.execute();
+
+                return storedProcedure.getInt(1) == 0;
+            }
+        } catch (SQLException ex) {
+            throw new RuntimeException("Failed to update database.", ex);
+        }
     }
 
     private Connection getConnection() {
@@ -829,9 +890,8 @@ public class AspNetIdentityStorageProvider
         }
     }
 
-    private String generatePassword() {
-        // TODO: implement
-        return null;
+    private String generatePassword(RealmModel realm) {
+        return RandomString.randomCode(20);
     }
 
     private <T> Stream<T> queryAsStream(RealmModel realm, SqlStatementFunction<PreparedStatement> statement,
