@@ -18,6 +18,7 @@ import java.sql.Types;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -45,13 +46,18 @@ import org.keycloak.models.RealmModel;
 import org.keycloak.models.RequiredActionProviderModel;
 import org.keycloak.models.UserCredentialModel;
 import org.keycloak.models.UserModel;
+import org.keycloak.models.cache.CachedUserModel;
+import org.keycloak.models.cache.UserCache;
 import org.keycloak.models.credential.PasswordCredentialModel;
+import org.keycloak.models.utils.ReadOnlyUserModelDelegate;
 import org.keycloak.policy.PasswordPolicyManagerProvider;
 import org.keycloak.policy.PolicyError;
+import org.keycloak.storage.ReadOnlyException;
 import org.keycloak.storage.StorageId;
 import org.keycloak.storage.UserStorageProvider;
 import org.keycloak.storage.adapter.InMemoryUserAdapter;
 import org.keycloak.storage.user.ImportedUserValidation;
+import org.keycloak.storage.user.SynchronizationResult;
 import org.keycloak.storage.user.UserLookupProvider;
 import org.keycloak.storage.user.UserQueryProvider;
 import org.keycloak.storage.user.UserRegistrationProvider;
@@ -420,17 +426,17 @@ public class AspNetIdentityStorageProvider
     @Override
     public Stream<UserModel> getGroupMembersStream(RealmModel realm, GroupModel group, Integer firstResult,
             Integer maxResults) {
-        return null;
+        return Stream.empty();
     }
 
     @Override
     public Stream<UserModel> searchForUserByUserAttributeStream(RealmModel realm, String attrName, String attrValue) {
-        return null;
+        return Stream.empty();
     }
 
     @Override
     public boolean supportsCredentialType(String credentialType) {
-        return credentialType.equals(PasswordCredentialModel.TYPE);
+        return model.isAllowPasswordAuthentication() && credentialType.equals(PasswordCredentialModel.TYPE);
     }
 
     @Override
@@ -449,6 +455,11 @@ public class AspNetIdentityStorageProvider
 
         if (!(credentialInput instanceof UserCredentialModel)) {
             logger.info("credential Input not instanceof userCredentialModel");
+            return false;
+        }
+
+        if (session.userCredentialManager().isConfiguredLocally(realm, user,
+                PasswordCredentialModel.TYPE)) {
             return false;
         }
 
@@ -474,14 +485,23 @@ public class AspNetIdentityStorageProvider
             return false;
         }
 
-        String password = input.getChallengeResponse();
+        switch (model.getEditMode()) {
+            case READ_ONLY:
+                throw new ReadOnlyException("Federated storage is not writable");
+            case WRITABLE: {
+                String password = input.getChallengeResponse();
 
-        PolicyError error = session.getProvider(PasswordPolicyManagerProvider.class).validate(realm, user, password);
-        if (error != null) {
-            throw new ModelException(error.getMessage(), error.getParameters());
+                PolicyError error = session.getProvider(PasswordPolicyManagerProvider.class).validate(realm, user,
+                        password);
+                if (error != null) {
+                    throw new ModelException(error.getMessage(), error.getParameters());
+                }
+
+                return updateUserPassword(realm, user.getUsername(), password);
+            }
+            default:
+                return false;
         }
-
-        return updateUserPassword(realm, user.getUsername(), password);
     }
 
     @Override
@@ -544,6 +564,66 @@ public class AspNetIdentityStorageProvider
     public void close() {
     }
 
+    public SynchronizationResult importAllUsers(RealmModel realm, Date lastSync) {
+        final SynchronizationResult syncResult = new SynchronizationResult();
+
+        String sql = "select u.UserName, m.Email, m.Comment, m.IsApproved, m.CreateDate, u.UserId, m.IsLockedOut "
+                + "from [dbo].[aspnet_Membership] m join [dbo].[aspnet_Users] u on m.UserId = u.UserId "
+                + "join [dbo].[aspnet_Applications] a on u.ApplicationId = a.ApplicationId "
+                + "where a.LoweredApplicationName = ?";
+
+        if (lastSync != null) {
+            sql += " and m.CreateDate > ?";
+        }
+
+        try (Connection connection = getConnection()) {
+            try (PreparedStatement query = connection.prepareStatement(sql)) {
+                query.setString(1, model.getApplicationName());
+
+                if (lastSync != null) {
+                    query.setDate(2, new java.sql.Date(lastSync.getTime()));
+                }
+
+                try (ResultSet resultSet = query.executeQuery()) {
+                    while (resultSet.next()) {
+                        String userId = resultSet.getString(6);
+                        UserModel existingLocalUser = session.userLocalStorage()
+                                .searchForUserByUserAttributeStream(realm,
+                                        AspNetIdentityConstants.ASPNET_IDENTITY_ID, userId)
+                                .findFirst().orElse(null);
+
+                        if (existingLocalUser == null) {
+                            AspNetIdentityUser aspNetUser = new AspNetIdentityUser();
+                            aspNetUser.setUserName(resultSet.getString(1));
+                            aspNetUser.setEmail(resultSet.getString(2));
+                            aspNetUser.setComment(resultSet.getString(3));
+                            aspNetUser.setIsApproved(resultSet.getBoolean(4));
+                            aspNetUser.setCreatedTimestamp(resultSet.getTimestamp(5).getTime());
+                            aspNetUser.setId(userId);
+                            aspNetUser.setIsLockedOut(resultSet.getBoolean(7));
+
+                            importUserFromIdentity(realm, aspNetUser);
+                            syncResult.increaseAdded();
+                        } else {
+                            UserCache userCache = session.userCache();
+                            if (userCache != null) {
+                                userCache.evict(realm, existingLocalUser);
+                            }
+
+                            // TODO: Update keycloak user
+
+                            syncResult.increaseUpdated();
+                        }
+                    }
+                }
+            }
+        } catch (SQLException ex) {
+            throw new RuntimeException("Failed to query database.", ex);
+        }
+
+        return syncResult;
+    }
+
     private UserModel readUser(RealmModel realm, ResultSet resultSet) {
 
         try {
@@ -579,7 +659,11 @@ public class AspNetIdentityStorageProvider
             if (existingLocalUser != null) {
                 imported = existingLocalUser;
                 // Need to evict the existing user from cache
-                session.userCache().evict(realm, existingLocalUser);
+
+                UserCache userCache = session.userCache();
+                if (userCache != null) {
+                    userCache.evict(realm, existingLocalUser);
+                }
             } else {
                 imported = session.userLocalStorage().addUser(realm, aspNetUser.getUserName());
             }
@@ -614,6 +698,10 @@ public class AspNetIdentityStorageProvider
         imported.setCreatedTimestamp(aspNetUser.getCreatedTimestamp());
         imported.setEnabled(!aspNetUser.getIsLockedOut());
 
+        if (model.isUpdatePasswordFirstLogin()) {
+            imported.addRequiredAction(UserModel.RequiredAction.UPDATE_PASSWORD);
+        }
+
         if (model.isUpdateProfileFirstLogin()) {
             imported.addRequiredAction(UserModel.RequiredAction.UPDATE_PROFILE);
         }
@@ -629,6 +717,19 @@ public class AspNetIdentityStorageProvider
         UserModel existing = userManager.getManagedProxiedUser(local.getId());
         if (existing != null) {
             return existing;
+        }
+
+        if (local instanceof CachedUserModel) {
+            local = session.userStorageManager().getUserById(realm, local.getId());
+
+            existing = userManager.getManagedProxiedUser(local.getId());
+            if (existing != null) {
+                return existing;
+            }
+        }
+
+        if (model.getEditMode() == EditMode.READ_ONLY) {
+            local = new ReadOnlyUserModelDelegate(local);
         }
 
         userManager.setManagedProxiedUser(local, aspNetUser);

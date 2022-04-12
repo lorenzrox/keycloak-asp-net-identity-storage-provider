@@ -19,6 +19,16 @@ public class AspNetIdentityConstants {
 
     public static final String IMPORT_ENABLED_LABEL = "aspnet-identity.import-enabled.label";
     public static final String IMPORT_ENABLED_HELP_TEXT = "aspnet-identity.import-enabled.tooltip";
+
     public static final String UPDATE_PROFILE_FIRST_LOGIN_LABEL = "aspnet-identity.update-profile-first-login.label";
     public static final String UPDATE_PROFILE_FIRST_LOGIN_HELP_TEXT = "aspnet-identity.update-profile-first-login.tooltip";
+
+    public static final String UPDATE_PASSWORD_FIRST_LOGIN_LABEL = "aspnet-identity.update-password-first-login.label";
+    public static final String UPDATE_PASSWORD_FIRST_LOGIN_HELP_TEXT = "aspnet-identity.update-password-first-login.tooltip";
+
+    public static final String ALLOW_PASSWORD_AUTHENTICATION_LABEL = "aspnet-identity.allow-password-authentication.label";
+    public static final String ALLOW_PASSWORD_AUTHENTICATION_HELP_TEXT = "aspnet-identity.allow-password-authentication.tooltip";
+
+    public static final String EDIT_MODE_LABEL = "aspnet-identity.edit-mode.label";
+    public static final String EDIT_MODE_HELP_TEXT = "aspnet-identity.edit-mode.tooltip";
 }
