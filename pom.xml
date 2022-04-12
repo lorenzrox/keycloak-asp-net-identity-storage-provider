@@ -4,13 +4,14 @@
 
     <groupId>org.keycloak</groupId>
     <artifactId>keycloak-asp-net-identity-storage-provider</artifactId>
-    <version>15.0.2</version>
-    <packaging>pom</packaging>
+    <version>17.0.1</version>
+    <packaging>jar</packaging>
+    <name>Keycloak AspNet Identity User Storage Provider</name>
+    <description>Keycloak AspNet Identity User Storage Provider</description>
 
-    <modules>
-        <module>ear</module>
-        <module>provider</module>
-    </modules>
+    <scm>
+        <url>https://github.com/lorenzrox/keycloak-asp-net-identity-storage-provider</url>
+    </scm>
 
     <properties>
         <version.org.keycloak>${project.version}</version.org.keycloak>
@@ -20,33 +21,51 @@
         <mysql.driver.version>8.0.23</mysql.driver.version>
         <postgresql.driver.version>42.2.18</postgresql.driver.version>
         <mariadb.driver.version>2.7.2</mariadb.driver.version>
-        <mssql.driver.version>9.4.0.jre8</mssql.driver.version>
+        <mssql.driver.version>9.2.0.jre8</mssql.driver.version>
 
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.source>1.8</maven.compiler.source>
         <maven.compiler.target>1.8</maven.compiler.target>
     </properties>
 
+    <dependencies>
+        <dependency>
+            <groupId>org.keycloak</groupId>
+            <artifactId>keycloak-core</artifactId>
+            <scope>provided</scope>
+            <version>${version.org.keycloak}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.keycloak</groupId>
+            <artifactId>keycloak-server-spi</artifactId>
+            <scope>provided</scope>
+            <version>${version.org.keycloak}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.keycloak</groupId>
+            <artifactId>keycloak-server-spi-private</artifactId>
+            <scope>provided</scope>
+            <version>${version.org.keycloak}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.jboss.logging</groupId>
+            <artifactId>jboss-logging</artifactId>
+            <version>${jboss.logging.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.microsoft.sqlserver</groupId>
+            <artifactId>mssql-jdbc</artifactId>
+            <version>${mssql.driver.version}</version>
+        </dependency>
+    </dependencies>
+
     <build>
-        <plugins>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-ear-plugin</artifactId>
-                <version>3.0.2</version>
-                <configuration>
-                    <version>7</version>
-                </configuration>
-            </plugin>
-
-            <plugin>
-                <groupId>org.wildfly.plugins</groupId>
-                <artifactId>wildfly-maven-plugin</artifactId>
-                <version>1.2.0.Final</version>
-                <configuration>
-                    <skip>true</skip>
-                </configuration>
-            </plugin>
-        </plugins>
+        <finalName>${project.artifactId}</finalName>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+        </resources>
     </build>
-
 </project>
