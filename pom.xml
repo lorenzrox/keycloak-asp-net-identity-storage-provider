@@ -6,8 +6,8 @@
     <artifactId>keycloak-asp-net-identity-storage-provider</artifactId>
     <version>17.0.1</version>
     <packaging>jar</packaging>
-    <name>Keycloak AspNet Identity User Storage Provider</name>
-    <description>Keycloak AspNet Identity User Storage Provider</description>
+    <name>Keycloak: AspNet Identity User Storage Provider</name>
+    <description>Keycloak: AspNet Identity User Storage Provider</description>
 
     <scm>
         <url>https://github.com/lorenzrox/keycloak-asp-net-identity-storage-provider</url>
