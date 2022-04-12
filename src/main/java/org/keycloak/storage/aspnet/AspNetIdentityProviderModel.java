@@ -1,7 +1,6 @@
 package org.keycloak.storage.aspnet;
 
 import org.keycloak.component.ComponentModel;
-import org.keycloak.storage.UserStorageProvider;
 import org.keycloak.storage.UserStorageProviderModel;
 import org.keycloak.storage.UserStorageProvider.EditMode;
 
