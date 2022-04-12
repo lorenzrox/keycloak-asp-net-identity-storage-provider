@@ -33,7 +33,7 @@ import javax.crypto.spec.SecretKeySpec;
 
 import org.jboss.logging.Logger;
 import org.keycloak.common.util.Base64;
-import org.keycloak.common.util.RandomString;
+import org.keycloak.common.util.SecretGenerator;
 import org.keycloak.credential.CredentialInput;
 import org.keycloak.credential.CredentialInputUpdater;
 import org.keycloak.credential.CredentialInputValidator;
@@ -891,7 +891,7 @@ public class AspNetIdentityStorageProvider
     }
 
     private String generatePassword(RealmModel realm) {
-        return RandomString.randomCode(20);
+        return SecretGenerator.getInstance().randomString(20);
     }
 
     private <T> Stream<T> queryAsStream(RealmModel realm, SqlStatementFunction<PreparedStatement> statement,

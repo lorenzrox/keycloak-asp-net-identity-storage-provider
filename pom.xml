@@ -17,12 +17,6 @@
         <version.org.keycloak>${project.version}</version.org.keycloak>
         <jboss.logging.version>3.4.1.Final</jboss.logging.version>
 
-        <!-- Databases -->
-        <mysql.driver.version>8.0.23</mysql.driver.version>
-        <postgresql.driver.version>42.2.18</postgresql.driver.version>
-        <mariadb.driver.version>2.7.2</mariadb.driver.version>
-        <mssql.driver.version>9.2.0.jre8</mssql.driver.version>
-
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.source>1.8</maven.compiler.source>
         <maven.compiler.target>1.8</maven.compiler.target>
@@ -51,12 +45,6 @@
             <groupId>org.jboss.logging</groupId>
             <artifactId>jboss-logging</artifactId>
             <version>${jboss.logging.version}</version>
-        </dependency>
-
-        <dependency>
-            <groupId>com.microsoft.sqlserver</groupId>
-            <artifactId>mssql-jdbc</artifactId>
-            <version>${mssql.driver.version}</version>
         </dependency>
     </dependencies>
 
